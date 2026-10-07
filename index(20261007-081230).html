@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task 4 — Computer Vision Object Detector</title>
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  background:#090e1a;color:#edf2ff
+}
+.container{max-width:1450px;margin:auto;padding:26px}
+header,.card{
+  background:#101827;border:1px solid #26334d;border-radius:20px
+}
+header{padding:26px;margin-bottom:20px}
+h1{margin:0 0 8px;font-size:clamp(28px,4vw,44px)}
+p{color:#9eabc5;line-height:1.6}
+.controls{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:12px;margin-top:20px
+}
+label{font-size:12px;color:#93a0bc;display:block;margin-bottom:6px}
+button,input,select{
+  width:100%;padding:11px 12px;border-radius:11px;border:1px solid #303d59;
+  background:#151f33;color:#fff;font:inherit
+}
+button{cursor:pointer;font-weight:700}
+.primary{background:#6265ed;border-color:#7678ff}
+.secondary{background:#19243a}
+.danger{background:#3a1d2a;border-color:#693247}
+.layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(330px,.7fr);gap:20px}
+.card{padding:18px}
+.card h2{font-size:18px;margin:0 0 14px}
+.videoBox{
+  position:relative;width:100%;aspect-ratio:16/9;background:#050911;
+  border-radius:15px;overflow:hidden;border:1px solid #26334d
+}
+video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+canvas{pointer-events:none}
+.placeholder{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  text-align:center;color:#7e8ba6;padding:30px
+}
+.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.metric{
+  background:#151f33;border:1px solid #273650;border-radius:13px;padding:13px
+}
+.metric span{display:block;color:#8997b4;font-size:11px}
+.metric strong{display:block;font-size:21px;margin-top:4px}
+.status{
+  margin-top:13px;background:#151f33;border:1px solid #273650;
+  padding:12px;border-radius:12px;color:#aebad3;font-size:13px
+}
+.log{
+  margin:0;background:#070c15;color:#99e3c4;padding:13px;border-radius:12px;
+  height:220px;overflow:auto;font:12px/1.55 Consolas,monospace
+}
+.info{
+  padding:12px;background:#151f33;border-radius:12px;color:#9ca9c3;
+  font-size:12px;line-height:1.6;margin-top:12px
+}
+.bar{height:9px;background:#202b42;border-radius:20px;overflow:hidden;margin-top:7px}
+.bar i{display:block;width:0;height:100%;background:#7476f5}
+@media(max-width:950px){.layout{grid-template-columns:1fr}.container{padding:14px}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Computer Vision Object Detector & Frame Segmenter</h1>
+  <p>
+    Task 4 mini-project: real-time browser camera pipeline using Gaussian smoothing,
+    adaptive thresholding and contour-style connected-component detection with
+    dynamic class/count overlays and frame-by-frame performance metrics.
+  </p>
+
+  <div class="controls">
+    <div>
+      <label>Detection Mode</label>
+      <select id="mode">
+        <option value="bright">Bright Objects</option>
+        <option value="dark">Dark Objects</option>
+      </select>
+    </div>
+    <div>
+      <label>Gaussian Blur</label>
+      <select id="blur">
+        <option value="3">3 × 3</option>
+        <option value="5" selected>5 × 5</option>
+        <option value="7">7 × 7</option>
+      </select>
+    </div>
+    <div>
+      <label>Threshold Sensitivity <span id="thresholdValue">145</span></label>
+      <input id="threshold" type="range" min="40" max="230" value="145">
+    </div>
+    <div>
+      <label>Minimum Object Area <span id="areaValue">900</span> px</label>
+      <input id="minArea" type="range" min="100" max="5000" step="100" value="900">
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button class="primary" id="startBtn">Start Camera</button>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button class="danger" id="stopBtn">Stop Camera</button>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button class="secondary" id="snapshotBtn">Save Frame</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <main>
+    <section class="card">
+      <h2>Live Detection View</h2>
+      <div class="videoBox">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        <div class="placeholder" id="placeholder">
+          Click <b>Start Camera</b> and allow browser camera access.
+        </div>
+      </div>
+      <div class="status" id="status">Pipeline idle.</div>
+    </section>
+
+    <section class="card" style="margin-top:20px">
+      <h2>Processing Pipeline</h2>
+      <div class="info">
+        Camera Frame → Grayscale → Gaussian Blur → Adaptive/Threshold Matrix
+        → Connected Components → Bounding Boxes → Object Count + Frame Metrics
+      </div>
+    </section>
+  </main>
+
+  <aside>
+    <section class="card">
+      <h2>Frame-by-Frame Metrics</h2>
+      <div class="metrics">
+        <div class="metric"><span>FPS</span><strong id="fps">—</strong></div>
+        <div class="metric"><span>Frame Time</span><strong id="frameTime">—</strong></div>
+        <div class="metric"><span>Objects</span><strong id="objects">0</strong></div>
+        <div class="metric"><span>Processed Frames</span><strong id="frames">0</strong></div>
+        <div class="metric"><span>Avg Area</span><strong id="avgArea">—</strong></div>
+        <div class="metric"><span>Pipeline</span><strong id="pipeline">Idle</strong></div>
+      </div>
+
+      <div style="margin-top:16px">
+        <div class="info" id="classInfo">
+          Detected class: <b>Unknown Object</b><br>
+          Browser-side segmentation is based on pixel intensity and connected regions.
+        </div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:20px">
+      <h2>Processing Load</h2>
+      <div class="bar"><i id="loadBar"></i></div>
+      <p class="small" id="loadText">Waiting for camera.</p>
+    </section>
+
+    <section class="card" style="margin-top:20px">
+      <h2>Visualization Log</h2>
+      <pre class="log" id="log">[SYSTEM] Task 4 detector initialized.</pre>
+    </section>
+  </aside>
+</div>
+</div>
+
+<script>
+"use strict";
+
+/*
+ TASK 4
+ Real-time browser CV pipeline implemented with Canvas APIs.
+
+ Pipeline:
+   1. Capture webcam frame
+   2. Convert pixels to grayscale
+   3. Gaussian blur
+   4. Adaptive threshold matrix
+   5. Connected-component / contour-style segmentation
+   6. Bounding-box overlay
+   7. Object counts and frame metrics
+
+ No external computer-vision package is required.
+*/
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d", {willReadFrequently:true});
+
+let stream = null;
+let running = false;
+let raf = null;
+let frameCount = 0;
+let lastTime = 0;
+let fpsFrames = 0;
+let fpsStart = 0;
+let off = document.createElement("canvas");
+let offCtx = off.getContext("2d", {willReadFrequently:true});
+
+const $ = id => document.getElementById(id);
+
+$("threshold").addEventListener("input",e=>{
+  $("thresholdValue").textContent=e.target.value;
+});
+$("minArea").addEventListener("input",e=>{
+  $("areaValue").textContent=e.target.value;
+});
+
+function log(message){
+  const box=$("log");
+  box.textContent += "\\n" + message;
+  box.scrollTop=box.scrollHeight;
+}
+
+function setStatus(text){
+  $("status").textContent=text;
+}
+
+async function startCamera(){
+  if(running) return;
+
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:"environment",width:{ideal:1280},height:{ideal:720}},
+      audio:false
+    });
+
+    video.srcObject=stream;
+    await video.play();
+
+    running=true;
+    frameCount=0;
+    fpsFrames=0;
+    fpsStart=performance.now();
+    $("placeholder").style.display="none";
+    $("pipeline").textContent="Running";
+    setStatus("Camera active — processing frames.");
+    log("[CAMERA] Camera stream started.");
+    requestAnimationFrame(processFrame);
+  }catch(err){
+    setStatus("Camera access failed. Please allow camera permission.");
+    log("[ERROR] " + err.message);
+  }
+}
+
+function stopCamera(){
+  running=false;
+  if(raf) cancelAnimationFrame(raf);
+  if(stream){
+    stream.getTracks().forEach(t=>t.stop());
+    stream=null;
+  }
+  video.srcObject=null;
+  $("pipeline").textContent="Stopped";
+  setStatus("Camera stopped.");
+  log("[CAMERA] Camera stream stopped.");
+}
+
+function saveFrame(){
+  if(canvas.width===0) return;
+  const a=document.createElement("a");
+  a.download="task4-detection-frame.png";
+  a.href=canvas.toDataURL("image/png");
+  a.click();
+  log("[EXPORT] Detection frame saved as PNG.");
+}
+
+/*
+ Gaussian blur approximation.
+ A small separable Gaussian kernel is applied directly to grayscale pixels.
+*/
+function gaussianBlur(src,w,h,size){
+  const radius=Math.floor(size/2);
+  const sigma=size===3?0.85:size===5?1.2:1.6;
+  const kernel=[];
+  let sum=0;
+
+  for(let i=-radius;i<=radius;i++){
+    const v=Math.exp(-(i*i)/(2*sigma*sigma));
+    kernel.push(v); sum+=v;
+  }
+  for(let i=0;i<kernel.length;i++) kernel[i]/=sum;
+
+  const temp=new Float32Array(w*h);
+  const out=new Float32Array(w*h);
+
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let val=0;
+      for(let k=-radius;k<=radius;k++){
+        const xx=Math.max(0,Math.min(w-1,x+k));
+        val += src[y*w+xx]*kernel[k+radius];
+      }
+      temp[y*w+x]=val;
+    }
+  }
+
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let val=0;
+      for(let k=-radius;k<=radius;k++){
+        const yy=Math.max(0,Math.min(h-1,y+k));
+        val += temp[yy*w+x]*kernel[k+radius];
+      }
+      out[y*w+x]=val;
+    }
+  }
+  return out;
+}
+
+/*
+ Adaptive threshold:
+ Local neighborhood mean is approximated using an integral image.
+ This follows the task requirement for an adaptive threshold matrix
+ rather than relying only on one global threshold.
+*/
+function adaptiveThreshold(gray,w,h,baseThreshold,mode){
+  const integral=new Float64Array((w+1)*(h+1));
+  const out=new Uint8Array(w*h);
+  const radius=7;
+  const areaSize=(radius*2+1)**2;
+
+  for(let y=1;y<=h;y++){
+    let rowSum=0;
+    for(let x=1;x<=w;x++){
+      rowSum += gray[(y-1)*w+(x-1)];
+      integral[y*(w+1)+x]=integral[(y-1)*(w+1)+x]+rowSum;
+    }
+  }
+
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const x1=Math.max(0,x-radius), y1=Math.max(0,y-radius);
+      const x2=Math.min(w-1,x+radius), y2=Math.min(h-1,y+radius);
+
+      const A=integral[y1*(w+1)+x1];
+      const B=integral[y1*(w+1)+(x2+1)];
+      const C=integral[(y2+1)*(w+1)+x1];
+      const D=integral[(y2+1)*(w+1)+(x2+1)];
+      const localMean=(D-B-C+A)/((x2-x1+1)*(y2-y1+1));
+
+      // Sensitivity adjusts the local offset.
+      const offset=(baseThreshold-128)*0.20;
+      const value=gray[y*w+x];
+
+      out[y*w+x] = mode==="bright"
+        ? (value > localMean + offset ? 1 : 0)
+        : (value < localMean - offset ? 1 : 0);
+    }
+  }
+  return out;
+}
+
+/*
+ Connected components = contour-style segmentation.
+ Each binary region is explored with a queue and converted to a bounding box.
+*/
+function connectedComponents(binary,w,h,minArea){
+  const seen=new Uint8Array(w*h);
+  const components=[];
+
+  // Sample every pixel. Four-neighbor flood fill.
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const idx=y*w+x;
+      if(!binary[idx] || seen[idx]) continue;
+
+      const queue=[idx];
+      seen[idx]=1;
+
+      let head=0,count=0;
+      let minX=x,maxX=x,minY=y,maxY=y;
+
+      while(head<queue.length){
+        const cur=queue[head++];
+        const cy=Math.floor(cur/w), cx=cur-cy*w;
+        count++;
+
+        if(cx<minX)minX=cx;if(cx>maxX)maxX=cx;
+        if(cy<minY)minY=cy;if(cy>maxY)maxY=cy;
+
+        const neighbors=[
+          cur-1,cur+1,cur-w,cur+w
+        ];
+
+        for(const n of neighbors){
+          if(n<0 || n>=w*h || seen[n] || !binary[n]) continue;
+          const ny=Math.floor(n/w), nx=n-ny*w;
+          if(nx<=0||nx>=w-1||ny<=0||ny>=h-1) continue;
+          seen[n]=1;
+          queue.push(n);
+        }
+      }
+
+      if(count>=minArea){
+        components.push({
+          area:count,
+          x:minX,y:minY,
+          width:maxX-minX+1,
+          height:maxY-minY+1,
+          cx:(minX+maxX)/2,
+          cy:(minY+maxY)/2
+        });
+      }
+    }
+  }
+
+  // Largest components first.
+  components.sort((a,b)=>b.area-a.area);
+  return components.slice(0,30);
+}
+
+function processFrame(now){
+  if(!running) return;
+
+  raf=requestAnimationFrame(processFrame);
+
+  if(video.readyState<2) return;
+
+  const startTime=performance.now();
+
+  // Keep processing resolution moderate for real-time browser performance.
+  const targetW=640;
+  const ratio=video.videoHeight/video.videoWidth || 0.5625;
+  const targetH=Math.max(240,Math.round(targetW*ratio));
+
+  if(canvas.width!==targetW || canvas.height!==targetH){
+    canvas.width=targetW;
+    canvas.height=targetH;
+    off.width=targetW;
+    off.height=targetH;
+  }
+
+  offCtx.drawImage(video,0,0,targetW,targetH);
+  const image=offCtx.getImageData(0,0,targetW,targetH);
+  const data=image.data;
+
+  const gray=new Float32Array(targetW*targetH);
+
+  // RGB → grayscale using luminance weighting.
+  for(let i=0,p=0;i<data.length;i+=4,p++){
+    gray[p]=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
+  }
+
+  const blurSize=Number($("blur").value);
+  const blurred=gaussianBlur(gray,targetW,targetH,blurSize);
+
+  const threshold=Number($("threshold").value);
+  const mode=$("mode").value;
+  const binary=adaptiveThreshold(blurred,targetW,targetH,threshold,mode);
+
+  const minArea=Number($("minArea").value);
+  const components=connectedComponents(binary,targetW,targetH,minArea);
+
+  // Display original frame first.
+  ctx.drawImage(video,0,0,targetW,targetH);
+
+  // Draw segmentation results.
+  ctx.lineWidth=2;
+  ctx.font="bold 14px Arial";
+
+  components.forEach((obj,i)=>{
+    ctx.strokeStyle="#00ffb3";
+    ctx.strokeRect(obj.x,obj.y,obj.width,obj.height);
+
+    const label=`Object ${i+1}`;
+    ctx.fillStyle="#07120e";
+    const tw=ctx.measureText(label).width+10;
+    ctx.fillRect(obj.x,obj.y-22,tw,22);
+
+    ctx.fillStyle="#ffffff";
+    ctx.fillText(label,obj.x+5,obj.y-6);
+
+    ctx.beginPath();
+    ctx.arc(obj.cx,obj.cy,4,0,Math.PI*2);
+    ctx.fillStyle="#ffcf4a";
+    ctx.fill();
+  });
+
+  // Dynamic overlay required by the task.
+  ctx.fillStyle="rgba(4,9,18,.82)";
+  ctx.fillRect(12,12,250,90);
+  ctx.fillStyle="#ffffff";
+  ctx.font="bold 16px Arial";
+  ctx.fillText(`TARGET CLASS: ${mode==="bright"?"BRIGHT":"DARK"} OBJECT`,24,36);
+  ctx.font="14px Arial";
+  ctx.fillText(`OBJECT COUNT: ${components.length}`,24,60);
+  ctx.fillText(`FRAME: ${frameCount+1}`,24,82);
+
+  const frameTime=performance.now()-startTime;
+  frameCount++;
+  fpsFrames++;
+
+  if(!lastTime) lastTime=now;
+  const elapsed=now-fpsStart;
+
+  if(elapsed>=1000){
+    const fps=(fpsFrames*1000)/elapsed;
+    $("fps").textContent=fps.toFixed(1);
+    fpsFrames=0;
+    fpsStart=now;
+  }
+
+  $("frameTime").textContent=frameTime.toFixed(2)+" ms";
+  $("objects").textContent=components.length;
+  $("frames").textContent=frameCount;
+
+  const avg=components.length
+    ? components.reduce((s,o)=>s+o.area,0)/components.length : 0;
+  $("avgArea").textContent=avg?Math.round(avg)+" px":"0 px";
+
+  const load=Math.min(100,frameTime/33.3*100);
+  $("loadBar").style.width=load+"%";
+  $("loadText").textContent=`Frame processing load: ${load.toFixed(1)}% of a 30 FPS frame budget.`;
+
+  $("classInfo").innerHTML=
+    `Detected class: <b>${mode==="bright"?"Bright Object":"Dark Object"}</b><br>`+
+    `${components.length} segmented region(s) currently satisfy the minimum area threshold.`;
+
+  setStatus(
+    `Frame ${frameCount}: ${components.length} object(s) detected | `+
+    `${frameTime.toFixed(2)} ms processing time.`
+  );
+
+  if(frameCount%30===0){
+    log(`[FRAME ${frameCount}] objects=${components.length} | `+
+        `time=${frameTime.toFixed(2)}ms | avgArea=${Math.round(avg)}px`);
+  }
+}
+
+$("startBtn").addEventListener("click",startCamera);
+$("stopBtn").addEventListener("click",stopCamera);
+$("snapshotBtn").addEventListener("click",saveFrame);
+
+if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+  setStatus("This browser does not support webcam access.");
+  log("[ERROR] getUserMedia is unavailable.");
+}
+</script>
+</body>
+</html>
